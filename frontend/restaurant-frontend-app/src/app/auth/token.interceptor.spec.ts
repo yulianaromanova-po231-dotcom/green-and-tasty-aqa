@@ -82,4 +82,29 @@ describe('tokenInterceptor', () => {
     expect(toastService.error).not.toHaveBeenCalled();
     expect(receivedStatus).toBe(500);
   });
+
+  describe('with a signed-in user', () => {
+    beforeEach(() => {
+      const authService = TestBed.inject(AuthenticationService) as jasmine.SpyObj<AuthenticationService>;
+      authService.getTokens.and.returnValue({ idToken: 'owner-id-token' } as ReturnType<AuthenticationService['getTokens']>);
+    });
+
+    it('adds the Cognito token to the owner endpoints under /guest/groups/', () => {
+      const ownerUrl = 'https://test.api/guest/groups/grp-1/sessions';
+      http.get(ownerUrl).subscribe();
+
+      const req = httpMock.expectOne(ownerUrl);
+      expect(req.request.headers.get('Authorization')).toBe('Bearer owner-id-token');
+      req.flush({ participants: [], total: 0 });
+    });
+
+    it('leaves guest-session endpoints untouched', () => {
+      const guestUrl = 'https://test.api/guest/sessions/s-1/dishes';
+      http.post(guestUrl, { dishId: 'd', quantity: 1 }).subscribe();
+
+      const req = httpMock.expectOne(guestUrl);
+      expect(req.request.headers.has('Authorization')).toBeFalse();
+      req.flush({});
+    });
+  });
 });

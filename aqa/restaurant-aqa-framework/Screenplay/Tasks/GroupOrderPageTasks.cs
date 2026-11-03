@@ -102,7 +102,10 @@ public sealed class SignOutOfTheStorefront : ITask
     public async Task PerformAsAsync(Actor actor)
     {
         var page = actor.LookingAtThePage();
-        await page.EvaluateAsync("() => localStorage.clear()");
         await page.Context.ClearCookiesAsync();
+
+        // A browser that has not opened the storefront yet (about:blank) has nobody signed in and no storage to clear.
+        if (page.Url.StartsWith("http", StringComparison.Ordinal))
+            await page.EvaluateAsync("() => localStorage.clear()");
     }
 }
