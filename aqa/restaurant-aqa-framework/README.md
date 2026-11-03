@@ -2,6 +2,8 @@
 
 End-to-end tests for the Green & Tasty restaurant application: Reqnroll (Gherkin) + TUnit + Playwright for .NET, with the Screenplay pattern.
 
+> **This repository:** the suite covers the group pre-order (homework direction 1). Each scenario provisions its own restaurant, customers and waiter through the API, so only `UI_URL` and `API_URL` are needed — the `WAITER_*`, `ADMIN_*` and `TESTTABLE_*` settings below are optional. See the [repository README](../../README.md) for scope, chosen behaviour and how to run a subset.
+
 Guidance for extending the suite (writing Gherkin, steps, Screenplay, test data, working with an AI assistant) is in [CLAUDE.md](CLAUDE.md).
 
 ## Run the tests

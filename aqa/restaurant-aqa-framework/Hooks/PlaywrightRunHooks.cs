@@ -26,6 +26,10 @@ public static class PlaywrightRunHooks
 
         Playwright = await Microsoft.Playwright.Playwright.CreateAsync();
 
+        // The deployed backend runs on Lambda: a cold start can take several seconds, longer than Playwright's
+        // default 5 s for Expect(...). Assertions wait as long as any other UI action.
+        Assertions.SetDefaultExpectTimeout(settings.DefaultTimeoutMs);
+
         Browser = settings.Browser switch
         {
             BrowserKind.Firefox => await Playwright.Firefox.LaunchAsync(new BrowserTypeLaunchOptions { Headless = settings.Headless }),

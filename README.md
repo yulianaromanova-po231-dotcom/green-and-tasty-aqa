@@ -1,311 +1,118 @@
-# Deployment Guide
+# Green & Tasty: e2e-тести групового pre-order
 
-This repo uses three deployment tracks:
+Домашнє завдання #8 (Test Automation) Марафону IT-технологій 2026. Виконала **Романова Юліана**.
 
-- Terraform for shared AWS infrastructure under `infra/terraform`
-- AWS Syndicate for the backend application under `backend/restaurant-backend-app`
-- Angular build artifacts synced to the frontend S3 bucket under `frontend/restaurant-frontend-app`
+| | |
+|---|---|
+| **Напрям** | **Напрям 1. Груповий pre-order.** Тестується власна реалізація: бекенд з ДЗ5 і фронтенд з ДЗ6, інтегровані й розгорнуті в AWS |
+| **Підхід** | **BDD + Screenplay**, наявний фреймворк EPAM (Reqnroll + TUnit + Playwright for .NET), розширений під групове замовлення |
+| **Рівні** | 1, 2 і 3, позитивні й негативні сценарії, UI та API |
+| **Об'єкт тестування** | фронтенд https://d31xoqdbs6rjnl.cloudfront.net, API `https://vx8vlt4fii.execute-api.eu-north-1.amazonaws.com/develop` |
 
-## Prerequisites
+Тести лежать в [`aqa/restaurant-aqa-framework`](aqa/restaurant-aqa-framework). Пайплайни в [`.github/workflows`](.github/workflows). Поруч лежить код, який тестується: [`backend`](backend) (ДЗ5) і [`frontend`](frontend) (ДЗ6). Інструкція з розгортання: [DEPLOYMENT.md](DEPLOYMENT.md).
 
-Install the tools below on your machine:
+---
 
-- AWS CLI configured with credentials for the target AWS account (`aws configure`) (https://docs.aws.amazon.com/cli/latest/userguide/getting-started-prereqs.html)
-- Terraform 1.10 or newer (https://developer.hashicorp.com/terraform/install)
-- Python 3.10-3.11 (https://www.python.org/downloads/release/python-3110/)
-- .NET 10 SDK (https://dotnet.microsoft.com/en-us/download/dotnet/10.0)
-- AWS Syndicate (`pip install aws-syndicate`) (https://github.com/epam/aws-syndicate)
-- Node.js 22.x with npm (https://nodejs.org/en/download/archive/v22.0.0)
+## Що покрито
 
-## Deployment order
+38 сценаріїв (з урахуванням рядків `Examples`): 29 API і 9 UI.
 
-Use this order:
+| Рівень | Feature | UI (екран Owner / офіціанта) | API (авторизація, валідація) |
+|---|---|---|---|
+| **1. Перегляд учасників** | [`GroupPreOrderReview.feature`](aqa/restaurant-aqa-framework/Features/GroupPreOrderReview.feature) | Owner бачить гостей, їхні страви й підсумки, консолідоване замовлення й Grand Total; оновлення після зміни кошика (Refresh); порожній стан і заблокований Submit; інший клієнт не відкриває чужий екран | учасники, страви, кількості, суми; загальна сума = сума по учасниках і змінюється разом із кошиком; непідтверджений кошик і гість без страв є в списку; порожня група (`participants: []`, `total: 0`); доступ для іншого клієнта, офіціанта, гостя й неавторизованого; неіснуюча група |
+| **2. Підтвердження** | [`GroupPreOrderSubmit.feature`](aqa/restaurant-aqa-framework/Features/GroupPreOrderSubmit.feature) | Owner підтверджує на екрані: «Sent to Restaurant», консолідація лише підтверджених кошиків; офіціант бачить замовлення в інтерфейсі офіціанта; Submit недоступний, поки ніхто не підтвердив кошик | однакові страви об'єднуються, непідтверджені кошики не враховуються, замовлення стає `SubmittedByCustomer`, група стає `Submitted`; офіціант бачить склад; повторний submit; не-Owner; кожна умова, за якої підтвердити неможливо, окремим сценарієм |
+| **3. Видалення учасника** | [`GroupPreOrderRemoveParticipant.feature`](aqa/restaurant-aqa-framework/Features/GroupPreOrderRemoveParticipant.feature) | видалення гостя на екрані з перерахунком сум; **наскрізний сценарій**: гості додають страви → Owner переглядає → видаляє одного → підтверджує → офіціант бачить замовлення без видаленого | видалення одного з кількох; гостя, який уже підтвердив кошик; останнього учасника; учасник іншої групи (400); неіснуючий (404); не-Owner; власна сесія Owner; група вже підтверджена |
 
-1. Deploy Terraform infrastructure
-2. Deploy the backend using Syndicate
-3. Deploy the frontend to s3
+**Піраміда тестів.** UI-сценарії перевіряють те, що бачить користувач. API-сценарії перевіряють авторизацію й валідацію. Підготовка даних іде через API: ресторан, офіціант, бронювання, гості та їхні кошики. Гість у застосунку не має акаунта, тому його кошик теж готується через API. UI ж використовується для дій Owner і офіціанта.
 
-Terraform then provisions or updates the shared AWS foundation, including the frontend S3 bucket and CloudFront distribution. Syndicate packages and deploys the backend application stack. After that, build the Angular app with the correct backend URL and sync it to S3.
+### Поведінка, яку ДЗ не визначає (обрано й зафіксовано)
 
-## 1. Deploy Terraform infrastructure
+| Випадок | Поведінка | Де перевіряється |
+|---|---|---|
+| Запит не від Owner, але від авторизованого клієнта чи офіціанта | `403` | Outline «Somebody other than the owner…» у кожному рівні |
+| Запит без входу як клієнт (неавторизований відвідувач або гість лише з guest-токеном) | `401` від Cognito authorizer API Gateway | ті самі Outline |
+| Повторний submit уже підтвердженої групи | `400` «Group reservation was submitted.», склад замовлення не змінюється | «The owner cannot submit the same group pre-order twice» |
+| Видалення останнього учасника | `200`, `participants: []`, `total: 0` | «The owner removes the last participant» |
+| Owner видаляє власну сесію | `400` «The owner's own session cannot be removed from the group.» | «The owner cannot remove their own place in the group» |
+| Видалення після submit | `400` «Group reservation was submitted.» | «Nobody can be removed once the pre-order has been submitted» |
+| Група без учасників | `participants: []`, `total: 0` (як вимагає ДЗ) | «Nobody has joined the group yet» |
+| «У підтверджених кошиках немає жодної страви» | через застосунок недосяжно: бекенд не дає підтвердити порожній кошик («The cart is empty»). Тому тест перевіряє саме цю гарантію | «A guest cannot confirm a cart without dishes» |
+| Немає order (Owner не робив власний pre-order) | `400`, «… was not found.» | «The owner has not pre-ordered for the booking» |
 
-Terraform manages the shared infrastructure resources in `infra/terraform`.
+### Знайдений і виправлений дефект
 
-Before deploying, verify terraform config files:
-Replace variables with your **AWS account ID** and **Email**
+UI-тести на реальному API знайшли баг у фронтенді ДЗ6. Інтерсептор не додавав токен Owner до запитів `/guest/groups/{id}/sessions` і `/status`, бо вважав усі `/guest/*` гостьовими. Через це екран Owner на реальному бекенді показував «Couldn't load». На моках цього не було видно. Виправлено в `frontend/.../auth/token.interceptor.ts`, додано юніт-тести і перерозгорнуто фронтенд.
 
-- `infra/terraform/backend.tf` - replace the Terraform state bucket name
-- `infra/terraform/variables.tf` - replace the default `account_id` and `alert_emails`
+---
 
+## Як налаштувати й запустити
 
-Before running `terraform init`, create the Terraform state bucket with AWS CLI if it does not already exist. 
-Get your AWS account ID from the CLI first:
-
-Windows PowerShell:
-
-```powershell
-$ACCOUNT_ID = aws sts get-caller-identity --query Account --output text
-```
-
-Linux or macOS:
-
-```bash
-ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
-```
-
-You can use AWS Console interface
-AWS Management Console equivalent:
-- Go to **S3** → **Create bucket** and use the bucket name **restaurant-terraform-state-$ACCOUNT_ID**
-- Turn on **Versioning** in the bucket properties
-- Leave **Block all public access** enabled
-- Use **Default encryption** with SSE-S3 (AES256)
-
-As alternative you can you AWS CLI
-Replace the bucket name with the CLI variable:
-
-Windows PowerShell:
-
-```powershell
-aws s3api create-bucket `
-	--bucket restaurant-terraform-state-$ACCOUNT_ID `
-	--region us-west-2 `
-	--create-bucket-configuration LocationConstraint=us-west-2
-
-aws s3api put-bucket-versioning `
-	--bucket restaurant-terraform-state-$ACCOUNT_ID `
-	--versioning-configuration Status=Enabled
-
-aws s3api put-public-access-block `
-		--bucket restaurant-terraform-state-$ACCOUNT_ID `
-	--public-access-block-configuration `
-		"BlockPublicAcls=true,IgnorePublicAcls=true,BlockPublicPolicy=true,RestrictPublicBuckets=true"
-```
-
-Linux or macOS:
+Потрібні .NET 10 SDK і доступ до розгорнутого застосунку. Браузер Playwright фреймворк встановлює сам.
 
 ```bash
-aws s3api create-bucket \
-	--bucket restaurant-terraform-state-$ACCOUNT_ID \
-	--region us-west-2 \
-	--create-bucket-configuration LocationConstraint=us-west-2
-
-aws s3api put-bucket-versioning \
-	--bucket restaurant-terraform-state-$ACCOUNT_ID \
-	--versioning-configuration Status=Enabled
-
-aws s3api put-public-access-block \
-		--bucket restaurant-terraform-state-$ACCOUNT_ID \
-	--public-access-block-configuration \
-		"BlockPublicAcls=true,IgnorePublicAcls=true,BlockPublicPolicy=true,RestrictPublicBuckets=true"
+cd aqa/restaurant-aqa-framework
+cp .env.example .env      # вписати UI_URL і API_URL свого розгортання
+dotnet build
+dotnet run --no-build -- --report-trx
 ```
 
-### After bucket creation
-```bash
-cd ../../infra/terraform
-terraform init
-terraform fmt -check -recursive
-terraform validate
-terraform plan
-terraform apply -auto-approve
-```
+У `.env` достатньо двох значень, `UI_URL` і `API_URL`. Облікові записи не потрібні: кожен сценарій сам реєструє Owner, іншого клієнта й офіціанта. Офіціанта він ставить у список офіціантів свого ресторану, бо самостійною реєстрацією офіціанта не створиш. `.env` у `.gitignore`.
 
-## 2. Deploy the backend with Syndicate
-
-The backend app is deployed from `backend/restaurant-backend-app`.
-
-Before deploying, verify the Syndicate config files:
-edit syndicate.yml → set project_path to your local absolute path to backend/restaurant-backend-app
-Replace bucket names with your AWS account ID
-- `.syndicate-config-restaurant-backend-app/syndicate.yml`
-- `.syndicate-config-restaurant-backend-app/syndicate_aliases.yml`
-
-On Windows PowerShell, run:
-
-```powershell
-cd ../../backend/restaurant-backend-app
-python3 -m venv syndicate_venv
-.\syndicate_venv\Scripts\Activate.ps1
-pip install aws-syndicate
-$env:SDCT_CONF = (Resolve-Path ".\.syndicate-config-restaurant-backend-app").Path
-syndicate create-deploy-target-bucket
-syndicate build
-syndicate deploy --deploy_name dev
-```
-
-On Linux or macOS, run:
+### Підмножина сценаріїв (за тегом)
 
 ```bash
-cd ../../backend/restaurant-backend-app
-python3 -m venv syndicate_venv
-source syndicate_venv/bin/activate
-export SDCT_CONF="$(pwd)/.syndicate-config-restaurant-backend-app"
-syndicate create-deploy-target-bucket
-syndicate build
-syndicate deploy --deploy_name dev
+dotnet run --no-build -- --treenode-filter "/*/*/*/*[Category=level1]"   # рівень 1 (level2, level3)
+dotnet run --no-build -- --treenode-filter "/*/*/*/*[Category=api]"      # лише API (ui — лише UI)
+dotnet run --no-build -- --treenode-filter "/*/*/*/*[Category=smoke]"    # швидка перевірка
+dotnet run --no-build -- --treenode-filter "/*/*/*/*[Category=negative]" # негативні
+dotnet run --no-build -- --treenode-filter "/*/*/*/*[Category=e2e]"      # наскрізний сценарій
 ```
 
-For an incremental update instead of a full deploy, run the matching command for your shell.
+Теги: `@level1`, `@level2`, `@level3`, `@group-pre-order`, `@api`, `@ui`, `@smoke`, `@negative`, `@e2e`.
+
+### Де звіти
+
+Усе потрапляє в `aqa/restaurant-aqa-framework/TestResults/`:
+- `*-report.html` і `*.trx`: звіт TUnit;
+- `reqnroll/reqnroll_report.html`: звіт Reqnroll з кроками Gherkin;
+- `traces/*.zip`: Playwright trace для кожного впалого UI-сценарію (DOM, мережа, консоль, скриншоти). Відкрити: `npx playwright show-trace <file>.zip`.
+
+---
+
+## CI (GitHub Actions)
+
+| Workflow | Коли | Що робить |
+|---|---|---|
+| [`aqa-quality.yml`](.github/workflows/aqa-quality.yml) | кожен push і PR у `aqa/**` | немає згенерованих файлів, `dotnet format`, збірка (warnings = errors), Gherkin lint, список тестів |
+| [`aqa-tests.yml`](.github/workflows/aqa-tests.yml) | push у `aqa/**`, щоночі й вручну (Actions → AQA Tests → Run workflow, з вибором `all / ui / api / smoke / level1-3`) | запускає сценарії на розгорнутому застосунку й публікує артефакти: звіт TUnit і TRX, звіт Reqnroll, Playwright traces; підсумок у Job Summary |
+
+Впалий тест не зупиняє пайплайн. Крок тестів має `continue-on-error`, а звіти й артефакти публікуються завжди (`if: always()`). Наприкінці job позначається червоним, щоб падіння було видно.
+
+Адреси задаються змінними репозиторію (Settings → Secrets and variables → Actions → Variables): `AQA_UI_URL`, `AQA_API_URL`. Паролів і секретів не потрібно.
+
+---
+
+## Тестові дані
+
+- Кожен сценарій створює власний ресторан: локацію, офіціанта, стіл і страви з префіксом `AQA-Sample-`. Також він створює власних клієнтів (`aqa.sample.<guid>@example.com`) і бронювання. Тож сценарії незалежні й виконуються паралельно, до 4 одночасно.
+- Час бронювання рахується динамічно: `now + 3 дні`, різні години для кількох бронювань.
+- Після сценарію `CleanupScope` прибирає все створене у зворотному порядку: скасовує бронювання, знімає офіціанта зі списку, видаляє страви й локацію разом зі столами. Акаунти Cognito API не видаляє, тому на кожен запуск беруться унікальні адреси.
+
+## Архітектура тестів
 
 ```
-syndicate update
+Features/           Gherkin (бізнес-мова, персонажі: owner, guest, another customer, waiter, visitor)
+StepDefinitions/    тонкі кроки: одна й та сама фраза виконується через API у @api і через екран у @ui ([Scope])
+Screenplay/Tasks/   дії: OpenTheRestaurant, BookAGroupTable, JoinTheGroup, AddToTheCart, ConfirmTheCart,
+                    ReviewTheGroupPreOrder, SubmitTheGroupPreOrder, RemoveTheParticipant, … і UI-дії екрана Owner/офіціанта
+Screenplay/Questions/  що бачить актор: TheGroupPreOrderShown, TheConsolidatedPreOrder, TheReservationOrder,
+                    TheGroupStatus, TheGroupOrderPage, TheWaiterPreOrderShown, TheOutcome
+Ui/                 page objects: GroupOrderPage, ParticipantCardComponent, WaiterReservationsPage, WaiterPreOrderPage
+Api/                клієнти: GroupOrdersApi, WaitersApi (+ наявні Auth/Locations/Tables/Dishes/Reservations/Orders)
 ```
 
-## 3. Deploy the frontend
+Локатори обираються за пріоритетом: роль + доступне ім'я (`Remove Olena`, `Submit Pre-Order`, heading картки), потім CSS-класи компонентів. Очікування роблять Playwright `Expect`, без `sleep`. Відповідність «бізнес-результат ↔ HTTP-статус» описана в одному місці, в `OutcomeStepDefinitions`.
 
-This section describes the manual deployment flow. It does not use GitHub Actions.
+## Використання AI
 
-Terraform creates and configures everything needed for frontend hosting:
-
-- the private frontend S3 bucket
-- the bucket policy that allows CloudFront to read from it
-- the CloudFront distribution that serves the site
-
-You do not need to configure the bucket manually after `terraform apply`. The manual part is only building the frontend and uploading the files to S3.
-
-### 3.1 Get the backend URL
-
-Use the deployed API Gateway base URL as `BACKEND_URL`. Example:
-
-```text
-https://<api-id>.execute-api.us-west-2.amazonaws.com/develop
-```
-
-The production frontend build will fail unless `BACKEND_URL` is set.
-
-To look it up in AWS:
-
-```powershell
-aws apigateway get-rest-apis --region us-west-2 --query "items[?name=='restaurant-backend-api'].{name:name,id:id}" --output table
-```
-
-Or set variables from AWS CLI:
-
-Windows PowerShell:
-
-```powershell
-$API_ID = aws apigateway get-rest-apis --region us-west-2 --query "items[?name=='restaurant-backend-api'].id | [0]" --output text
-$env:BACKEND_URL = "https://$API_ID.execute-api.us-west-2.amazonaws.com/develop"
-```
-
-Linux or macOS:
-
-```bash
-API_ID=$(aws apigateway get-rest-apis --region us-west-2 --query "items[?name=='restaurant-backend-api'].id | [0]" --output text)
-export BACKEND_URL="https://$API_ID.execute-api.us-west-2.amazonaws.com/develop"
-```
-
-### 3.2 Build the production bundle
-
-From the frontend app directory, install dependencies and build:
-
-```powershell
-cd ../../frontend/restaurant-frontend-app
-npm ci
-npm run build
-```
-
-The build process generates `src/environments/environment.production.ts` automatically from `BACKEND_URL` and writes the production bundle to `dist/restaurant-frontend-app/browser`.
-
-### 3.3 Upload the bundle to S3
-
-Sync the built files to the frontend bucket:
-
-```powershell
-aws s3 sync dist/restaurant-frontend-app/browser s3://restaurant-frontend-$ACCOUNT_ID/ --delete
-```
-
-The `--delete` flag removes files in S3 that no longer exist in the local build output.
-
-### 3.4 Get the frontend URL
-
-Get the CloudFront domain name from Terraform:
-
-```powershell
-cd ../../infra/terraform
-terraform output cloudfront_distribution_domain_name
-terraform output cloudfront_distribution_id
-```
-
-Use the returned domain name as the frontend host. Example:
-
-```text
-https://dxxxxxxxxxxxx.cloudfront.net
-```
-
-CloudFront does not provide a fixed public IP you should use. Use the distribution domain name instead.
-
-## Clean up all resources
-
-Use the reverse order of deployment:
-
-1. Remove uploaded frontend files from the frontend S3 bucket
-2. Clean up the backend resources deployed by Syndicate
-3. Destroy the shared infrastructure managed by Terraform
-4. Remove the Terraform state bucket
-5. Remove the Syndicate artifacts bucket
-
-### Remove frontend files from S3
-
-The frontend bucket must be empty before Terraform can destroy it.
-
-```powershell
-aws s3 rm s3://restaurant-frontend-$ACCOUNT_ID/ --recursive
-```
-
-If you are not using the shared training account, replace the bucket name with your own account-specific frontend bucket.
-
-### Clean up backend resources with Syndicate
-
-From the backend project directory, use the same Syndicate configuration and run:
-
-```powershell
-cd ../../backend/restaurant-backend-app
-$env:SDCT_CONF = (Resolve-Path ".\.syndicate-config-restaurant-backend-app").Path
-syndicate clean
-```
-
-On Linux or macOS, use:
-
-```bash
-cd ../../backend/restaurant-backend-app
-export SDCT_CONF="$(pwd)/.syndicate-config-restaurant-backend-app"
-syndicate clean
-```
-
-This removes the backend resources that Syndicate deployed into the AWS account.
-
-### Destroy Terraform-managed infrastructure
-
-After the frontend bucket is empty and the backend resources are removed, destroy the shared infrastructure:
-
-```powershell
-cd ../../infra/terraform
-terraform destroy -auto-approve
-```
-
-This removes the frontend S3 bucket, CloudFront distribution, and the rest of the infrastructure managed in `infra/terraform`.
-
-### Clear versioned bucket
-
-S3 bucket for storing terraform state have versioning configured. In order to delete it you must empty all versions created for s3 object.
-
-- Go to **S3** select **restaurant-terraform-state-$ACCOUNT_ID** → **Empty Bucket**
-
-### Remove the Terraform state bucket
-
-The Terraform state bucket is configured in `infra/terraform/backend.tf` and is not deleted by `terraform destroy`. Empty it first and then delete it manually:
-
-```powershell
-aws s3api delete-bucket --bucket restaurant-terraform-state-$ACCOUNT_ID --region us-west-2
-```
-
-### Remove the Syndicate artifacts bucket
-
-The Syndicate deploy target bucket is not managed by Terraform in this repo. If you also want to delete that bucket, empty it first and then remove it manually:
-
-```powershell
-aws s3 rm s3://marathon2026-restaurant-artifacts-$ACCOUNT_ID/ --recursive
-aws s3api delete-bucket --bucket marathon2026-restaurant-artifacts-$ACCOUNT_ID --region us-west-2
-```
-
-Only do this if you are sure you no longer need the stored Syndicate build artifacts.
+Під час роботи використовувався AI-асистент (Claude): для аналізу завдання, написання коду тестів і цього README. Результат перевірено запуском усіх сценаріїв на розгорнутому застосунку: 29/29 API, 9/9 UI.

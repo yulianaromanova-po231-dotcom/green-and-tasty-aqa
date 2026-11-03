@@ -10,6 +10,10 @@ on:
           - all
           - ui
           - api
+          - smoke
+          - level1
+          - level2
+          - level3
         default: all
       custom_filter:
         description: >
@@ -19,9 +23,16 @@ on:
         type: string
         default: ""
 
-  # The scenarios run against the deployed environment and take minutes, so they are not tied to
-  # pushes or pull requests (those run the fast checks in aqa-quality.yml). They run on demand and nightly,
-  # which catches regressions in the environment itself even on days nobody touched the tests.
+  # The scenarios run against the deployed environment and take minutes. They run when the tests change on
+  # main, on demand and nightly, which catches regressions in the environment itself even on days nobody
+  # touched the tests.
+  push:
+    branches:
+      - main
+    paths:
+      - "aqa/restaurant-aqa-framework/**"
+      - ".github/workflows/aqa-tests.yml"
+
   schedule:
     - cron: "0 2 * * *"
 
@@ -105,6 +116,11 @@ jobs:
       - name: Build
         run: dotnet build --configuration Release --no-restore
 
+      # Chromium and the system libraries it needs on the runner (the framework would download the browser
+      # itself, but not the libraries).
+      - name: Install Playwright browser
+        run: pwsh bin/Release/net10.0/playwright.ps1 install --with-deps chromium
+
       - name: Resolve test filter
         id: filter
         shell: bash
@@ -118,6 +134,8 @@ jobs:
             filter="/*/*/*/*[Category=ui]"
           elif [ "$scope" = "api" ]; then
             filter="/*/*/*/*[Category=api]"
+          elif [ "$scope" != "all" ]; then
+            filter="/*/*/*/*[Category=$scope]"
           else
             filter=""
           fi

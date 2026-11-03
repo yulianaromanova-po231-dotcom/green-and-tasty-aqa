@@ -19,6 +19,9 @@ public sealed class SignInToTheStorefront(Requester who) : ITask
         };
 
         await actor.AttemptsToAsync(new SignInThroughTheLoginForm(email, password));
+
+        // The storefront only knows who signed in (and so which screens to show) once it has stored the user's profile.
+        await actor.LookingAtThePage().WaitForFunctionAsync("() => localStorage.getItem('user') !== null");
     }
 
     private static (string, string) Credentials(CustomerAccount account) => (account.Email, account.Password);
